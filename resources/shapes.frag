@@ -1,5 +1,4 @@
 #version 410
-
 #extension GL_ARB_shading_language_include : require
 
 #include <primitives.h>
@@ -18,7 +17,12 @@ out vec4 fragColor;
 
 void main() {
 
-
-    fragColor = vec4(1,1,1,1);
+    vec3 color = hsv2rgb_smooth(vec3(
+        vUV.y/10 + uTime/10 + vUV.x * 0.05,
+        0.8,
+        0.6 + vUV.x * 0.1
+        ));
+    // vec3 color = vec3(1,1,1);
+    fragColor = vec4(color,1.0);
 }
 

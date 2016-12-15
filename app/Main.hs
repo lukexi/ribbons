@@ -79,6 +79,10 @@ main = do
 
     glEnable GL_DEPTH_TEST
 
+    -- Wireframe
+    -- glPolygonMode GL_FRONT_AND_BACK GL_LINE
+    glPolygonMode GL_FRONT_AND_BACK GL_FILL
+
     void . flip runStateT initialState . whileWindow win $ \events -> do
         V2 winFbW winFbH <- fmap fromIntegral <$> glGetDrawableSize win
         glViewport 0 0 winFbW winFbH
@@ -107,20 +111,30 @@ main = do
             let newPoint = mouseLoc' * 2 - 1
                 mouseLoc' = (mouseLoc / winSize) & _y %~ (1 -)
 
-            gets _rsLastPoint >>= \case
+            use rsLastPoint >>= \case
                 Just lastPoint -> do
-                    let diff@(V2 x y) = lastPoint - newPoint
-                        angle = atan2 y x
+                    let diff@(V2 x y) = newPoint - lastPoint
                         mag = norm diff
-                        rotator = axisAngle (V3 0 0 1) angle
-                        p1 = rotate rotator (V3 -0.1 mag 0)
-                        p2 = rotate rotator (V3  0.1 mag 0)
-                        p1' = p1 ^. _xy + lastPoint
-                        p2' = p2 ^. _xy + lastPoint
-                    rsVertices %= \v -> p1':p2':v
-                    rsUVs      %= \u -> p1':p2':u
-                Nothing -> return ()
-            rsLastPoint ?= newPoint
+                    when (mag > 0.01) $ do
+                        let angle = atan2 y x + pi/2
+                            rotator = axisAngle (V3 0 0 1) angle
+                            p1 = rotate rotator (V3 -0.1 (negate mag) 0)
+                            p2 = rotate rotator (V3  0.1 (negate mag) 0)
+                            p1' = p1 ^. _xy + lastPoint
+                            p2' = p2 ^. _xy + lastPoint
+
+
+                        rsVertices %= \v -> p1':p2':v
+                        -- rsVertices %= \v -> p2':p1':v
+                        progress <- (/100) . fromIntegral . length <$> use rsVertices
+
+                        let u1 = V2 0 progress
+                            u2 = V2 1 progress
+                        rsUVs      %= \u -> u1:u2:u
+
+                        rsLastPoint ?= newPoint
+                Nothing -> rsLastPoint ?= newPoint
+
 
 
 
@@ -143,8 +157,8 @@ main = do
 makeScreenSpaceQuad shader = do
 
     quadVAO <- newVAO
-    quadVerticesBuffer <- bufferData GL_DYNAMIC_DRAW (replicate 1000 0)
-    quadUVsBuffer      <- bufferData GL_DYNAMIC_DRAW (replicate 1000 0)
+    quadVerticesBuffer <- bufferData GL_DYNAMIC_DRAW (replicate 10000 0)
+    quadUVsBuffer      <- bufferData GL_DYNAMIC_DRAW (replicate 10000 0)
     withVAO quadVAO $ do
         withArrayBuffer quadVerticesBuffer $
             assignFloatAttribute shader "aPosition" GL_FLOAT 2
