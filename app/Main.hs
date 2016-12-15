@@ -28,7 +28,8 @@ import Foreign.C
 
 import Control.Concurrent
 import Control.Arrow
-
+import SDL.Raw.Video (glSetAttribute)
+import SDL.Raw.Enum
 
 type Transform = M44 GLfloat
 
@@ -56,11 +57,19 @@ main = do
 
     win <- reacquire 0 $ createGLWindow "ribbons"
 
+    glSetAttribute SDL_GL_MULTISAMPLEBUFFERS 1
+    glSetAttribute SDL_GL_MULTISAMPLESAMPLES 4
+
+    glEnable GL_MULTISAMPLE
+
     swapInterval $= SynchronizedUpdates
 
     glEnable GL_DEPTH_TEST
     glBlendEquationSeparate GL_FUNC_ADD GL_FUNC_ADD
     glBlendFuncSeparate GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA GL_ONE GL_ZERO
+
+    glHint GL_LINE_SMOOTH_HINT GL_NICEST
+    glHint GL_POLYGON_SMOOTH_HINT GL_NICEST
 
     -- putStr "gl_ARB_shading_language_include support? "
     -- print gl_ARB_shading_language_include
@@ -77,7 +86,6 @@ main = do
         (quadVAO,  quadVerticesBuffer, quadUVsBuffer) <- makeScreenSpaceQuad shader
         return (shader, quadVAO, quadVerticesBuffer, quadUVsBuffer, uniforms)
 
-    glEnable GL_DEPTH_TEST
 
     -- Wireframe
     -- glPolygonMode GL_FRONT_AND_BACK GL_LINE
@@ -116,17 +124,19 @@ main = do
                     let diff@(V2 x y) = newPoint - lastPoint
                         mag = norm diff
                     when (mag > 0.01) $ do
+                        progress <- (/100) . fromIntegral . length <$> use rsVertices
+
                         let angle = atan2 y x + pi/2
                             rotator = axisAngle (V3 0 0 1) angle
-                            p1 = rotate rotator (V3 -0.1 (negate mag) 0)
-                            p2 = rotate rotator (V3  0.1 (negate mag) 0)
+                            width = (sin (progress*10) + 1.5) * 0.02
+                            p1 = rotate rotator (V3 (negate width) (negate mag) 0)
+                            p2 = rotate rotator (V3  width         (negate mag) 0)
                             p1' = p1 ^. _xy + lastPoint
                             p2' = p2 ^. _xy + lastPoint
 
 
                         rsVertices %= \v -> p1':p2':v
                         -- rsVertices %= \v -> p2':p1':v
-                        progress <- (/100) . fromIntegral . length <$> use rsVertices
 
                         let u1 = V2 0 progress
                             u2 = V2 1 progress
