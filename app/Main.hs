@@ -7,7 +7,7 @@
 
 module Main where
 
-import SDL.Pal hiding (glBindTexture, createTexture, updateTexture)
+import SDL.Pal hiding (get ,glBindTexture, createTexture, updateTexture)
 import Graphics.GL.Pal
 import Data.Time
 import Halive.Utils
@@ -15,6 +15,7 @@ import Halive.FileListener
 import Control.Lens.Extra hiding (Context)
 
 import Control.Monad.Trans
+import Control.Monad.State
 import Control.Monad
 import Data.Monoid
 import qualified Data.Set as S
@@ -23,9 +24,10 @@ import System.FilePath
 import Graphics.GL.Ext.ARB.ShadingLanguageInclude
 import Foreign.C
 
-import Foreign
+import Foreign hiding (void)
 
 import Control.Concurrent
+import Control.Arrow
 
 
 type Transform = M44 GLfloat
@@ -35,8 +37,15 @@ data ShapeUniforms = ShapeUniforms
     , uResolution :: UniformLocation (V2 GLfloat)
     , uMouse      :: UniformLocation (V2 GLfloat)
     , uTime       :: UniformLocation GLfloat
-    , uTexture    :: UniformLocation GLint
     } deriving Data
+
+data RibbonState = RibbonState
+    { _rsVertices :: [V2 GLfloat]
+    , _rsUVs      :: [V2 GLfloat]
+    }
+makeLenses ''RibbonState
+
+initialState = RibbonState [] []
 
 main :: IO ()
 main = do
@@ -61,20 +70,18 @@ main = do
 
         uniforms <- acquireUniforms shader
 
-        (quadVAO, quadVertCount) <- makeScreenSpaceQuad shader
-        return (shader, quadVAO, quadVertCount, uniforms)
+        (quadVAO,  quadVerticesBuffer, quadUVsBuffer) <- makeScreenSpaceQuad shader
+        return (shader, quadVAO, quadVerticesBuffer, quadUVsBuffer, uniforms)
 
+    glEnable GL_DEPTH_TEST
 
-    let (fbW, fbH) = (200, 200)
-    (framebuffer, framebufferTexture) <- createFramebuffer fbW fbH
-
-    whileWindow win $ \_events -> do
+    void . flip runStateT initialState . whileWindow win $ \events -> do
         V2 winFbW winFbH <- fmap fromIntegral <$> glGetDrawableSize win
         glViewport 0 0 winFbW winFbH
         glClearColor 0.1 0 0.1 1
-        glClear (GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT .|. GL_STENCIL_BUFFER_BIT)
+        glClear (GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT)
 
-        now <- realToFrac . utctDayTime <$> getCurrentTime
+        now <- realToFrac . utctDayTime <$> liftIO getCurrentTime
         winSize <- getWindowSizeV2 win
         mouseLoc <- getMouseLocationV2
 
@@ -82,52 +89,49 @@ main = do
 
 
 
-        (shader, quadVAO, quadVertCount, ShapeUniforms{..}) <- getWatchedResource
+        (shader,
+            quadVAO,
+            quadVerticesBuffer,
+            quadUVsBuffer,
+            ShapeUniforms{..}) <- liftIO getWatchedResource
 
 
         -- Draw one fullscreen quad
-        glEnable GL_DEPTH_TEST
+        forM_ events $ \case
+            Event { eventPayload =
+                MouseButtonEvent (MouseButtonEventData
+                    {mouseButtonEventMotion = Pressed})} -> do
+                let position = mouseLoc' * 2 - 1
+                    mouseLoc' = (mouseLoc / winSize) & _y %~ (1 -)
+                rsVertices %= (position:)
+                rsUVs      %= (position:)
+            _ -> return ()
 
+        RibbonState{..} <- get
+        bufferSubData quadVerticesBuffer _rsVertices
+        bufferSubData quadUVsBuffer _rsUVs
 
-        let model = mkTransformation (axisAngle (V3 0 1 0) now) (V3 0 -1 -5)
+        let model = mkTransformation (axisAngle (V3 0 1 0) 0) (V3 0 0 0)
         useProgram shader
         uniformV2 uResolution winSize
         uniformV2 uMouse (mouseLoc & _y %~ (`subtract` (winSize^._y)))
         uniformF uTime now
-        uniformI uTexture 0
-        uniformM44 uTransform (projection !*! model)
+        uniformM44 uTransform model
         withVAO quadVAO $
-            glDrawArrays GL_TRIANGLE_STRIP 0 quadVertCount
+            glDrawArrays GL_TRIANGLE_STRIP 0 (fromIntegral $ length _rsVertices)
 
 
         glSwapWindow win
 
-makeScreenSpaceQuad :: (MonadIO m, Num t)
-                    => Program -> m (VertexArrayObject, t)
 makeScreenSpaceQuad shader = do
 
-    let quadVertices =
-            [ V2 -1.0 -1.0
-            , V2 -1.0  1.0
-            , V2 1.0  -1.0
-            , V2 1.0   1.0
-            ] :: [V2 GLfloat]
-
-    let quadUVs =
-            [ V2 0 0
-            , V2 0  1.0
-            , V2 1.0  0
-            , V2 1.0   1.0
-            ] :: [V2 GLfloat]
-
     quadVAO <- newVAO
+    quadVerticesBuffer <- bufferData GL_DYNAMIC_DRAW (replicate 100 0)
+    quadUVsBuffer      <- bufferData GL_DYNAMIC_DRAW (replicate 100 0)
     withVAO quadVAO $ do
-
-        quadVerticesBuffer <- bufferData GL_STATIC_DRAW quadVertices
         withArrayBuffer quadVerticesBuffer $
             assignFloatAttribute shader "aPosition" GL_FLOAT 2
-        quadUVsBuffer <- bufferData GL_STATIC_DRAW quadUVs
         withArrayBuffer quadUVsBuffer $
             assignFloatAttribute shader "aUV" GL_FLOAT 2
 
-    return (quadVAO, fromIntegral $ length quadVertices)
+    return (quadVAO, quadVerticesBuffer, quadUVsBuffer)
