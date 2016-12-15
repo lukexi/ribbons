@@ -4,6 +4,8 @@
 
 #include <primitives.h>
 #include <operations.h>
+#include <color.h>
+#include <noise.h>
 
 uniform vec2 uResolution;
 uniform vec2 uMouse;
