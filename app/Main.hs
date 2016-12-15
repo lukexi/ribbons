@@ -24,7 +24,7 @@ import System.FilePath
 import Graphics.GL.Ext.ARB.ShadingLanguageInclude
 import Foreign.C
 
-import Foreign hiding (void)
+-- import Foreign hiding (void)
 
 import Control.Concurrent
 import Control.Arrow
@@ -42,10 +42,14 @@ data ShapeUniforms = ShapeUniforms
 data RibbonState = RibbonState
     { _rsVertices :: [V2 GLfloat]
     , _rsUVs      :: [V2 GLfloat]
+    , _rsLastPoint :: Maybe (V2 GLfloat)
     }
 makeLenses ''RibbonState
 
-initialState = RibbonState [] []
+initialState = RibbonState
+    []
+    []
+    Nothing
 
 main :: IO ()
 main = do
@@ -97,15 +101,28 @@ main = do
 
 
         -- Draw one fullscreen quad
-        forM_ events $ \case
-            Event { eventPayload =
-                MouseButtonEvent (MouseButtonEventData
-                    {mouseButtonEventMotion = Pressed})} -> do
-                let position = mouseLoc' * 2 - 1
-                    mouseLoc' = (mouseLoc / winSize) & _y %~ (1 -)
-                rsVertices %= (position:)
-                rsUVs      %= (position:)
-            _ -> return ()
+
+        isButtonDown <- getMouseButtons
+        when (isButtonDown ButtonLeft) $ do
+            let newPoint = mouseLoc' * 2 - 1
+                mouseLoc' = (mouseLoc / winSize) & _y %~ (1 -)
+
+            gets _rsLastPoint >>= \case
+                Just lastPoint -> do
+                    let diff@(V2 x y) = lastPoint - newPoint
+                        angle = atan2 y x
+                        mag = norm diff
+                        rotator = axisAngle (V3 0 0 1) angle
+                        p1 = rotate rotator (V3 -0.1 mag 0)
+                        p2 = rotate rotator (V3  0.1 mag 0)
+                        p1' = p1 ^. _xy + lastPoint
+                        p2' = p2 ^. _xy + lastPoint
+                    rsVertices %= \v -> p1':p2':v
+                    rsUVs      %= \u -> p1':p2':u
+                Nothing -> return ()
+            rsLastPoint ?= newPoint
+
+
 
         RibbonState{..} <- get
         bufferSubData quadVerticesBuffer _rsVertices
@@ -126,8 +143,8 @@ main = do
 makeScreenSpaceQuad shader = do
 
     quadVAO <- newVAO
-    quadVerticesBuffer <- bufferData GL_DYNAMIC_DRAW (replicate 100 0)
-    quadUVsBuffer      <- bufferData GL_DYNAMIC_DRAW (replicate 100 0)
+    quadVerticesBuffer <- bufferData GL_DYNAMIC_DRAW (replicate 1000 0)
+    quadUVsBuffer      <- bufferData GL_DYNAMIC_DRAW (replicate 1000 0)
     withVAO quadVAO $ do
         withArrayBuffer quadVerticesBuffer $
             assignFloatAttribute shader "aPosition" GL_FLOAT 2
